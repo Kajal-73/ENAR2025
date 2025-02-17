@@ -1,0 +1,526 @@
+---
+title: "ENAR_DATAFEST2025"
+author: "Kajal Gupta"
+date: "2025-02-17"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Packages 
+```{r}
+# Load required packages
+library(haven)  # For reading .xpt files
+library(dplyr)  # For data manipulation
+library(rio)
+library(readr)
+library(psych)
+library(tidyverse)
+library(Hmisc)
+library(gtsummary)
+library(bkmr)
+library(flextable) 
+library(officer)
+library(latex2exp)
+library(RColorBrewer)
+library(broom)
+library(rio)
+library(readxl)
+library(purrr)
+library(magrittr)
+require(ggplot2)
+require(GGally)
+require(reshape2)
+require(lme4)
+require(compiler)
+require(parallel)
+require(boot)
+require(lattice)
+```
+
+
+## Exploratory Data Analysis 
+
+## Tables
+```{r}
+# Load required libraries
+library(tidyverse)
+library(gtsummary)
+library(logistf)
+library(broom.helpers)
+
+# Load dataset 
+ENAR_data_comp <- read.csv("ENAR_comp_data.csv")
+head(ENAR_data_comp)
+# Step 1: Create BP category and binary outcome
+ENAR_data_comp <- ENAR_data_comp %>% 
+  mutate(
+    BP_category = ifelse(Avg_SY < 140 & Avg_DI < 90, "Controlled BP", "Uncontrolled BP"),
+    BP_category_binary = ifelse(BP_category == "Controlled BP", 1, 0)  # Binary outcome for logistic regression
+  )
+
+# Table 1: Descriptive Statistics and Bivariate Analysis (with p-values)
+table1_combined <- ENAR_data_comp %>% 
+  select(BP_category, Avg_SY, Avg_DI, LMW_Phthalates, HMW_Phthalates, DEHP_Phthalates, 
+         Combined_PFOS, URXBPH, INDFMPIR, PA_cat, ALQ101, RIAGENDR, RIDAGEYR, BMXBMI) %>%
+  tbl_summary(
+    by = BP_category,  
+    type = list(
+      all_dichotomous() ~ "categorical",
+      c(Avg_SY, Avg_DI, LMW_Phthalates, HMW_Phthalates, DEHP_Phthalates, 
+        Combined_PFOS, URXBPH, INDFMPIR, RIDAGEYR, BMXBMI) ~ "continuous2"
+    ),
+    statistic = list(
+      all_continuous() ~ c("{mean} ({sd})", "{median} ({IQR})"),
+      all_categorical() ~ "{n} ({p})"
+    ),
+    digits = list(
+      all_continuous() ~ c(1, 1),
+      all_categorical() ~ c(0, 0)
+    ),
+    missing = "no",
+    label = list(
+      LMW_Phthalates ~ "Low Molecular Weight Phthalates",
+      HMW_Phthalates ~ "High Molecular Weight Phthalates",
+      DEHP_Phthalates ~ "DEHP Phthalates",
+      Combined_PFOS ~ "PFOS",
+      URXBPH ~ "BPA",
+      Avg_SY ~ "Systolic BP",
+      Avg_DI ~ "Diastolic BP",
+      INDFMPIR ~ "Income Ratio",
+      PA_cat ~ "Physical Activity",
+      ALQ101 ~ "Alcohol Use",
+      RIAGENDR ~ "Gender",
+      RIDAGEYR ~ "Age",
+      BMXBMI ~ "BMI"
+    )
+  ) %>%
+  add_overall() %>%  # Adds an "Overall" column
+  add_p() %>%  # Adds p-values for statistical comparison
+  modify_header(all_stat_cols() ~ "**{level}**") %>%  # Updates column headers
+  bold_labels()
+
+# Define predictor variables
+predictors <- c("LMW_Phthalates", "HMW_Phthalates", "DEHP_Phthalates", "Combined_PFOS", "URXBPH", "INDFMPIR", "PA_cat", "ALQ101", "RIAGENDR", "RIDAGEYR", "BMXBMI")
+
+# Fit Unadjusted Firth Logistic Regression models (each predictor separately)
+unadjusted_models <- map(
+  predictors,
+  ~ logistf(reformulate(.x, response = "BP_category_binary"), data = ENAR_data_comp)
+)
+
+# Convert models to gtsummary tables
+unadjusted_tables <- map(
+  unadjusted_models, 
+  ~ tbl_regression(.x, exponentiate = TRUE, tidy_fun = broom.helpers::tidy_parameters)
+)
+
+# Stack unadjusted models with correct headers
+table2_unadjusted <- tbl_stack(unadjusted_tables, group_header = predictors)
+
+# Fit Adjusted Logistic Regression Model (Firth Logistic Regression)
+model_firth <- logistf(
+  BP_category_binary ~ LMW_Phthalates + HMW_Phthalates + DEHP_Phthalates + Combined_PFOS + URXBPH + INDFMPIR + PA_cat + ALQ101 + RIAGENDR + RIDAGEYR + BMXBMI, 
+  data = ENAR_data_comp
+)
+
+# Adjusted Regression Table
+table2_adjusted <- tbl_regression(
+  model_firth,  
+  exponentiate = TRUE,
+  tidy_fun = broom.helpers::tidy_parameters
+) %>%
+  modify_header(estimate ~ "**Adjusted OR (95% CI)**") %>%
+  bold_labels()
+
+# Merge Unadjusted and Adjusted Models Side-by-Side
+table2_combined <- tbl_merge(
+  list(table2_unadjusted, table2_adjusted),
+  tab_spanner = c("Unadjusted OR", "Adjusted OR")
+)
+
+# Print tables
+table1_combined
+table2_combined
+
+```
+
+```{r}
+library(officer)
+library(flextable)
+
+# Set page layout to landscape
+sect_properties <- prop_section(
+  page_size = page_size(orient = "landscape", width = 11.7, height = 8.3)
+)
+
+# Convert tables to flextable and save as Word document
+save_as_docx(
+  "Table 1: Descriptive Statistics Stratified by BP Category" = as_flex_table(table1_combined),
+  "Table 2: Unadjusted & Adjusted OR Models" = as_flex_table(table2_combined),
+  path = "ENAR_Tables.docx",
+  pr_section = sect_properties
+)
+
+```
+
+
+\newpage
+
+## Plots
+```{r}
+library(GGally)
+library(ggplot2)
+library(dplyr)
+library(ggcorrplot)
+library(gtsummary)
+
+# ==== 1. PAIRWISE DISTRIBUTIONS & CORRELATIONS ====
+g1 <- ggpairs(ENAR_data_comp[, c("LMW_Phthalates", "HMW_Phthalates", "DEHP_Phthalates", "Combined_PFOS", "URXBPH", "Avg_SY", "Avg_DI")])
+print(g1)
+
+# ==== 2. BOXPLOTS: Continuous Variables by BP Category ====
+bp_vars <- c("LMW_Phthalates", "HMW_Phthalates", "DEHP_Phthalates", "Combined_PFOS", "URXBPH", "INDFMPIR", "RIDAGEYR", "BMXBMI")
+
+g2 <- ENAR_data_comp %>%
+  pivot_longer(cols = all_of(bp_vars), names_to = "Variable", values_to = "Value") %>%
+  ggplot(aes(x = BP_category, y = Value, fill = BP_category)) +
+  geom_boxplot(alpha = 0.7) +
+  facet_wrap(~ Variable, scales = "free_y") +
+  theme_minimal() +
+  labs(title = "Distribution of Continuous Variables by BP Category", x = "BP Category", y = "Value") +
+  scale_fill_manual(values = c("Controlled BP" = "cadetblue", "Uncontrolled BP" = "orangered"))
+
+print(g2)
+
+# ==== 3. BARPLOTS: Categorical Variables Distribution ====
+cat_vars <- c("PA_cat", "ALQ101", "RIAGENDR")
+
+g3 <- ENAR_data_comp %>%
+  pivot_longer(cols = all_of(cat_vars), names_to = "Variable", values_to = "Category") %>%
+  ggplot(aes(x = Category, fill = BP_category)) +
+  geom_bar(position = "fill", alpha = 0.8) +  # Normalize within category
+  facet_wrap(~ Variable, scales = "free_x") +
+  theme_minimal() +
+  labs(title = "Distribution of Categorical Variables by BP Category", x = "Category", y = "Proportion") +
+  scale_fill_manual(values = c("Controlled BP" = "seagreen", "Uncontrolled BP" = "yellow"))
+
+print(g3)
+
+# ==== 4. CORRELATION HEATMAP ====
+corr_matrix <- ENAR_data_comp %>%
+  select(all_of(bp_vars)) %>%
+  cor(use = "pairwise.complete.obs")
+
+g4 <- ggcorrplot(corr_matrix, method = "circle", type = "lower",
+                 lab = TRUE, lab_size = 3, colors = c("violetred", "seashell3", "sienna"),
+                 title = "Correlation Heatmap of Continuous Variables",
+                 ggtheme = theme_minimal())
+
+print(g4)
+
+```
+
+
+
+
+\newpage
+
+## Machine Learning Algorithms 
+
+
+#### Create BP Outcome Variable
+```{r}
+ENAR_data_comp <- read.csv("ENAR_comp_data.csv")
+ENAR_data_comp2 <- ENAR_data_comp %>%
+  mutate(
+    BP_category = ifelse(Avg_SY < 140 & Avg_DI < 90, "Controlled BP", "Uncontrolled BP"),
+    BP_category_binary = ifelse(BP_category == "Controlled BP", 1, 0)  # Binary outcome for logistic regression
+  )
+head(ENAR_data_comp2)
+```
+
+
+
+#### Split Data into Training and Test Sets
+```{r}
+set.seed(123)
+train_data <- ENAR_data_comp2 %>% dplyr::sample_frac(0.80)
+test_data  <- dplyr::anti_join(ENAR_data_comp2, train_data, by = 'SEQN')
+```
+
+
+#### Feature Selection using LASSO Regression
+```{r}
+library(glmnet)
+library(ggplot2)
+library(dplyr)
+
+set.seed(123)
+
+# Exclude outcome variables from predictors
+predictor_vars <- ENAR_data_comp2 %>%
+  select(-c(Avg_SY, Avg_DI, BP_category, BP_category_binary))  # Remove outcome variables
+
+# Prepare data for LASSO
+X <- model.matrix(~ ., data = predictor_vars)[,-1]  # Remove intercept
+y <- ENAR_data_comp2$BP_category_binary  # Outcome variable
+
+# Fit LASSO model with cross-validation
+lasso_model <- cv.glmnet(X, y, alpha = 1, family = "binomial")
+
+# Get best lambda
+best_lambda <- lasso_model$lambda.min
+print(best_lambda)  # Optimal lambda value
+
+# Plot cross-validation curve
+plot(lasso_model)
+abline(v = log(best_lambda), col = "salmon", lwd = 2)  # Mark the best lambda
+
+# Extract coefficients at best lambda
+lasso_coeffs <- as.matrix(coef(lasso_model, s = "lambda.min"))
+lasso_coeffs_df <- data.frame(Feature = rownames(lasso_coeffs), Coefficient = lasso_coeffs[,1])
+
+# Remove intercept and zero coefficients
+lasso_coeffs_df <- lasso_coeffs_df %>%
+  filter(Feature != "(Intercept)", Coefficient != 0)
+
+print(lasso_coeffs_df)  # Display selected variables
+
+# Plot Selected Features
+ggplot(lasso_coeffs_df, aes(x = reorder(Feature, Coefficient), y = Coefficient)) +
+  geom_bar(stat = "identity", fill = "rosybrown") +
+  coord_flip() +
+  theme_minimal() +
+  labs(title = "LASSO Selected Features and Coefficients", x = "Features", y = "Coefficient Value")
+
+```
+
+
+####  Data Preparation & Splitting
+```{r}
+set.seed(123)
+library(dplyr)
+library(caret)
+
+# Select features from LASSO
+selected_features <- c("HMW_Phthalates", "DEHP_Phthalates", "Combined_PFOS",
+                       "RIDRETH1", "RIAGENDR", "RIDAGEYR", "INDFMPIR", 
+                       "BMXBMI", "PA_cat", "BP_category_binary")
+
+# Keep only selected features & outcome variable
+ENAR_data_selected <- ENAR_data_comp2 %>% dplyr::select(all_of(selected_features))
+
+# Split data (80% train, 20% test)
+train_index <- sample(seq_len(nrow(ENAR_data_selected)), size = 0.8 * nrow(ENAR_data_selected))
+train_data <- ENAR_data_selected[train_index, ]
+test_data <- ENAR_data_selected[-train_index, ]
+
+# Ensure outcome variable is a factor for classification
+train_data$BP_category_binary <- as.factor(train_data$BP_category_binary)
+test_data$BP_category_binary <- as.factor(test_data$BP_category_binary)
+```
+
+
+#### Train Machine Learning Models
+
+**(a) Logistic Regression Model**
+```{r}
+# Train Logistic Regression Model
+logit_model <- glm(BP_category_binary ~ ., data = train_data, family = binomial)
+summary(logit_model)
+# Predict on Test Data
+logit_probs <- predict(logit_model, test_data, type = "response")
+logit_pred <- ifelse(logit_probs > 0.5, 1, 0)
+```
+
+**(b) Decision Tree Model**
+```{r}
+library(rpart)
+library(rpart.plot)
+
+# Train Decision Tree
+tree_model <- rpart(BP_category_binary ~ ., data = train_data, method = "class")
+
+# Predict on Test Data
+tree_probs <- predict(tree_model, test_data, type = "prob")[, 2]
+tree_pred <- ifelse(tree_probs > 0.5, 1, 0)
+
+# Plot tree
+rpart.plot(tree_model)
+```
+
+
+**(c) Random Forest Model**
+```{r}
+
+library(randomForest)
+
+# Train Random Forest
+rf_model <- randomForest(BP_category_binary ~ ., data = train_data, ntree = 500, importance = TRUE)
+
+# Predict on Test Data
+rf_probs <- predict(rf_model, test_data, type = "prob")[, 2]
+rf_pred <- ifelse(rf_probs > 0.5, 1, 0)
+
+# Feature Importance Plot
+varImpPlot(rf_model)
+```
+
+
+**(d) Gradient Boosting**
+```{r}
+# Keep only selected features & outcome variable
+ENAR_data_selected <- ENAR_data_comp2 %>% dplyr::select(all_of(selected_features))
+
+# Split data (80% train, 20% test)
+train_index <- sample(seq_len(nrow(ENAR_data_selected)), size = 0.8 * nrow(ENAR_data_selected))
+train_data <- ENAR_data_selected[train_index, ]
+test_data <- ENAR_data_selected[-train_index, ]
+train_data$BP_category_binary <- as.numeric(train_data$BP_category_binary)
+test_data$BP_category_binary <- as.numeric(test_data$BP_category_binary)
+library(gbm)
+# Train Gradient Boosting Model
+gbm_model <- gbm(BP_category_binary ~ ., data = train_data, distribution = "bernoulli",
+                 n.trees = 500, interaction.depth = 3, shrinkage = 0.01, cv.folds = 5, n.cores = NULL)
+# Get best number of trees
+best_trees <- gbm.perf(gbm_model, method = "cv")
+
+# Predict on Test Data
+gbm_probs <- predict(gbm_model, test_data, n.trees = best_trees, type = "response")
+gbm_pred <- ifelse(gbm_probs > 0.5, 1, 0)
+```
+
+**Linear Model -BP continous**
+```{r}
+lm_model_SY <- lm(Avg_SY ~ HMW_Phthalates + DEHP_Phthalates +Combined_PFOS +
+                    INDFMPIR  +RIAGENDR + RIDAGEYR + BMXBMI, data = ENAR_data_comp)
+summary(lm_model_SY)
+
+lm_model_DI <- lm(Avg_DI ~ HMW_Phthalates + DEHP_Phthalates +Combined_PFOS +
+                    INDFMPIR  +RIAGENDR + RIDAGEYR + BMXBMI, data = ENAR_data_comp)
+summary(lm_model_DI)
+```
+
+**Linear Regression Visualisation **
+```{r}
+# Load required libraries
+library(ggplot2)
+library(patchwork)  # For combining plots
+
+# Predict BP Values
+ENAR_data_comp$Predicted_SY <- predict(lm_model_SY)
+ENAR_data_comp$Predicted_DI <- predict(lm_model_DI)
+
+# Scatter Plot: Actual vs Predicted Systolic BP
+plot_SY <- ggplot(ENAR_data_comp, aes(x = Avg_SY, y = Predicted_SY)) +
+  geom_point(alpha = 0.5, color = "powderblue") +
+  geom_smooth(method = "lm", col = "maroon") +
+  labs(title = "Linear Regression: Predicted vs. Actual Systolic BP",
+       x = "Actual Systolic BP",
+       y = "Predicted Systolic BP") +
+  theme_minimal()
+
+# Scatter Plot: Actual vs Predicted Diastolic BP
+plot_DI <- ggplot(ENAR_data_comp, aes(x = Avg_DI, y = Predicted_DI)) +
+  geom_point(alpha = 0.5, color = "darkolivegreen") +
+  geom_smooth(method = "lm", col = "maroon") +
+  labs(title = "Linear Regression: Predicted vs. Actual Diastolic BP",
+       x = "Actual Diastolic BP",
+       y = "Predicted Diastolic BP") +
+  theme_minimal()
+
+# Display both plots side by side
+plot_SY
+plot_DI
+
+```
+
+
+#### Model Evaluation
+
+**(a) Model Performance & Selection (AIC & BIC)**
+```{r}
+library(stats)
+
+# Compute AIC & BIC for Logistic Regression
+logit_aic <- AIC(logit_model)
+logit_bic <- BIC(logit_model)
+logit_step <- step(logit_model)
+
+# Decision Tree does not have AIC/BIC natively, but we compare overall model fit
+print(paste("AIC" , logit_aic))
+print(paste("BIC" ,logit_bic))
+
+
+```
+
+Note: AIC/BIC is not directly applicable to tree-based models (Decision Tree, Random Forest, Gradient Boosting).
+Instead, we will compare using AUC-ROC and confusion matrix performance.
+
+
+#### Model Evaluation
+
+**(a)  AUC-ROC Curve**
+```{r}
+library(pROC)
+library(ggplot2)
+
+# Compute ROC curves and AUC values
+roc_tree <- roc(test_data$BP_category_binary, tree_probs)
+roc_gbm <- roc(test_data$BP_category_binary, gbm_probs)
+roc_rf <- roc(test_data$BP_category_binary, rf_probs)
+roc_logit <- roc(test_data$BP_category_binary, logit_probs)
+
+auc_tree <- round(auc(roc_tree), 3)
+auc_gbm <- round(auc(roc_gbm), 3)
+auc_rf <- round(auc(roc_rf), 3)
+auc_logit <- round(auc(roc_logit), 3)
+
+# Define a common grid of specificity values
+common_specificity <- seq(0, 1, length.out = 100)
+
+# Interpolate sensitivities for each model at common specificity values
+interp_sensitivity <- function(roc_curve) {
+  approx(1 - roc_curve$specificities, roc_curve$sensitivities, xout = common_specificity, rule = 2)$y
+}
+
+roc_df <- data.frame(
+  Specificity = rep(common_specificity, 4),
+  Sensitivity = c(interp_sensitivity(roc_tree), interp_sensitivity(roc_gbm), 
+                  interp_sensitivity(roc_rf), interp_sensitivity(roc_logit)),
+  Model = factor(rep(c(
+    paste("Decision Tree (AUC =", auc_tree, ")"),
+    paste("Gradient Boosting (AUC =", auc_gbm, ")"),
+    paste("Random Forest (AUC =", auc_rf, ")"),
+    paste("Logistic Regression (AUC =", auc_logit, ")")
+  ), each = length(common_specificity)))
+)
+
+# Plot ROC curves with AUC values in legend
+ggplot(roc_df, aes(x = Specificity, y = Sensitivity, color = Model)) +
+  geom_line(size = 1) +
+  labs(title = "AUC-ROC Curves for Model Comparison", x = "1 - Specificity", y = "Sensitivity") +
+  theme_minimal() +
+  scale_color_manual(values = c("tomato", "cyan", "springgreen", "purple"))
+
+```
+
+
+**(b) Confusion Matrices & Accuracy**
+```{r}
+library(caret)
+
+# Compute confusion matrices
+conf_matrix_tree <- confusionMatrix(factor(tree_pred), factor(test_data$BP_category_binary))
+conf_matrix_gbm <- confusionMatrix(factor(gbm_pred), factor(test_data$BP_category_binary))
+conf_matrix_rf <- confusionMatrix(factor(rf_pred), factor(test_data$BP_category_binary))
+conf_matrix_logit <- confusionMatrix(factor(logit_pred), factor(test_data$BP_category_binary))
+
+print(paste("Decision Tree Accuracy:", conf_matrix_tree$overall["Accuracy"]))
+print(paste("Gradient Boosting Accuracy:", conf_matrix_gbm$overall["Accuracy"]))
+print(paste("Random Forest Accuracy:", conf_matrix_rf$overall["Accuracy"]))
+print(paste("Logistic Regression Accuracy:", conf_matrix_logit$overall["Accuracy"]))
+```
